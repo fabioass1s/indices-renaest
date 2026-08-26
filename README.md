@@ -1,56 +1,52 @@
-# projeto_v2 — pipelines em notebooks
+# Índices RENAEST
 
-Vincular cada acidente do RENAEST a uma via concreta do banco (`via_id`), e desenhar o
-resultado num mapa.
+Pipeline que liga cada sinistro do RENAEST a uma via concreta da malha viária municipal e
+calcula a extensão real dessa via. Com as duas coisas dá para calcular um índice de
+sinistralidade: sinistros por quilômetro. Contagem absoluta não serve, porque premia via
+comprida.
 
-Cinco notebooks, numerados pela ordem de execução. Cada um faz uma etapa, grava no
-mesmo banco e explica o que está fazendo enquanto faz.
+Cinco notebooks Python, numerados pela ordem de execução, gravando todos no mesmo banco
+SQLite. Cada um explica o que está fazendo enquanto faz.
+
+## Estado
+
+| Etapa | Situação |
+|---|---|
+| 01. Ingestão do RENAEST | pronta |
+| 02. Malha viária e extensão corrigida | pronta |
+| 03. Padronização dos endereços | pronta |
+| 04. Associação do sinistro à via | pronta, 69,0% de cobertura |
+| 05. Contagem por via e mapa | pronta |
+| **Índice de sinistralidade** | **não calculado** |
+| **Auditoria dos resultados** | **não feita** |
+
+O banco já tem as duas grandezas do índice: a contagem em `acidentes_por_via` e a extensão
+corrigida em `comp_usado` de `vias_processadas`. Falta dividir uma pela outra. O que existe
+hoje é contagem absoluta, que não é ranking de risco.
+
+Nenhum número saído daqui foi conferido contra o boletim de origem, imagem aérea ou cadastro
+municipal. Os 69,0% dizem quantas linhas receberam uma via, não quantas receberam a via certa.
+Trate tudo como preliminar.
+
+Recorte já processado: Aparecida de Goiânia (IBGE 5201405), 2024, 8.865 sinistros, malha
+baixada em 13/08/2026.
 
 ## Ordem de execução
 
 ```
-01_ingestao_renaest      ->  tabela `acidentes`
-                                 |
-02_malha_viaria          ->  tabela `vias_processadas`
-                                 |                    |
-03_revisao_enderecos  <----------+                    |
-   (precisa do 01)      ->  tabela `acidentes_revisado`
-                                 |                    |
-04_associacao_vias    <----------+--------------------+
-   (precisa do 02 e do 03)  ->  coluna `via_id_associada`
-                                 |
-05_mapa_calor         <----------+
-   (precisa do 02 e do 04)  ->  tabela `acidentes_por_via`
-                                 e `data/mapas/mapa_calor_vias.html`
+01_ingestao_renaest  ->  acidentes                  (independente)
+02_malha_viaria      ->  vias_processadas           (independente)
+03_revisao_enderecos ->  acidentes_revisado         (precisa do 01)
+04_associacao_vias   ->  via_id_associada           (precisa do 02 e do 03)
+05_mapa_calor        ->  acidentes_por_via + HTML   (precisa do 02 e do 04)
 ```
 
-O **01** e o **02** são independentes entre si — rode na ordem que quiser. O **03**
-exige o 01. O **04** exige os dois anteriores. O **05** exige o 02 e o 04.
+Os notebooks 03 e 04 processam um município e um ano por execução, e são retomáveis: execução
+interrompida, a seguinte continua de onde parou.
 
-Os notebooks 03 e 04 processam **um município e um ano por execução**.
+## Como rodar
 
-## Você edita um arquivo só: `parametros.py`
-
-Município, ano, tamanho de lote, aparência do mapa — tudo vive no `parametros.py`.
-Nenhuma primeira célula de notebook tem valor escrito à mão; todas apenas dão nomes
-curtos ao que vem de lá.
-
-A divisão entre os dois arquivos de configuração:
-
-- **`parametros.py`** — o que você quer processar. Muda a cada execução.
-- **`config.py`** — onde as coisas estão: caminho do banco, pastas, chave e modelo da
-  IA, nomes de coluna do RENAEST. Muda raramente.
-
-O município é escolhido **uma vez**, pelo código do IBGE, e o nome da cidade usado na
-consulta ao OpenStreetMap é derivado dele. Antes o notebook 02 trazia `CIDADE` e
-`ESTADO` escritos à mão enquanto os notebooks 03, 04 e 05 usavam `CODIGO_IBGE` — duas
-formas de dizer a mesma coisa, livres para divergir. Quando divergiam, os acidentes de
-uma cidade eram associados às ruas de outra, aproveitando nomes que coincidem, e o
-resultado saía marcado como `ok` sem nenhum aviso.
-
-## Antes da primeira execução
-
-Hoje nenhum ambiente conda tem tudo o que os notebooks precisam:
+**1. Ambiente.** Nenhum conda daqui tem tudo:
 
 | | `base` | `brabo` |
 |---|---|---|
@@ -59,162 +55,124 @@ Hoje nenhum ambiente conda tem tudo o que os notebooks precisam:
 | openai, python-dotenv | não | sim |
 | sentence-transformers | não | não |
 
-O caminho é rodar o **JupyterLab do `base`** com o **kernel do `brabo`**, e completar
-o que falta no `brabo`.
+Rode o JupyterLab do `base` com o kernel do `brabo`:
 
 ```powershell
-# 1. completa as bibliotecas que faltam no brabo
 conda activate brabo
 pip install openai python-dotenv               # ja instalados
 pip install sentence-transformers accelerate   # opcional, ~2 GB (puxa o torch)
-
-# 2. registra o brabo como kernel do Jupyter (só na primeira vez)
 python -m ipykernel install --user --name brabo --display-name "Python (brabo)"
 
-# 3. abre o JupyterLab, que vive no base
 conda activate base
 jupyter lab
 ```
 
-Ao abrir cada notebook, **selecione o kernel `Python (brabo)`**. Com o kernel padrão
-`python3` (o `base`), a primeira célula falha em `import geopandas`.
+Selecione o kernel `Python (brabo)` em cada notebook. Com o `python3` do `base`, a primeira
+célula falha em `import geopandas`.
 
-A `DEEPSEEK_API_KEY` é lida do `.env` da raiz do repositório. Sem ela, os notebooks
-03 e 04 param na primeira célula com mensagem explícita.
+**2. Chave da IA.** O `.env` da raiz não existe ainda, e sem ele os notebooks 03 e 04 param na
+primeira célula. Uma linha basta:
 
-Sem `sentence-transformers`, a busca do notebook 04 cai para comparação de texto
-apenas — funciona, mas as candidatas pioram, e é justamente a qualidade delas que
-limita o resultado final.
+```
+DEEPSEEK_API_KEY=sua-chave
+```
+
+O modelo é o `deepseek-v4-flash`, chamado pelo protocolo da OpenAI, e é por isso que a
+biblioteca instalada é a `openai`. Trocar de provedor é trocar chave, modelo e URL no
+`config.py`; os notebooks não mudam.
+
+**3. O que processar.** Só o `parametros.py`: município, ano, tamanho de lote, aparência do
+mapa. Nenhuma célula de notebook tem valor escrito à mão.
+
+O município é escolhido **uma vez**, pelo código do IBGE, e o nome da cidade usado na consulta
+ao OpenStreetMap é derivado dele. Antes o notebook 02 trazia `CIDADE` e `ESTADO` à mão enquanto
+os notebooks 03, 04 e 05 usavam `CODIGO_IBGE`, duas formas de dizer a mesma coisa e livres para
+divergir. Quando divergiam, os sinistros de uma cidade eram associados às ruas de outra e o
+resultado saía marcado como `ok`, sem aviso.
+
+Para outro município, acrescente a entrada em `MUNICIPIOS` e aponte `CODIGO_IBGE` para ela. Hoje
+o dicionário tem Aparecida de Goiânia, Belo Horizonte, Brasília e São Paulo. Goiânia não está
+lá. Os códigos disponíveis, com a contagem de sinistros de cada um, saem da etapa 8 do
+notebook 01.
 
 ## Arquivos
 
 | arquivo | o que é |
 |---|---|
-| `parametros.py` | **o único que você edita.** Município, ano, lotes, aparência do mapa. Os cinco notebooks importam daqui |
-| `config.py` | caminhos, `.env`, chave e modelo da IA, nomes de coluna. Onde as coisas estão |
+| `parametros.py` | **o único que você edita.** Município, ano, lotes, mapa |
+| `config.py` | caminhos, `.env`, chave e modelo da IA, nomes de coluna |
 | `busca.py` | o `MotorBusca`. É biblioteca, não etapa; só o notebook 04 usa |
-| `limpar_associacao.py` | apaga vínculos que apontam para vias que não existem mais. Rode depois de reprocessar o notebook 02 |
-| `data/db/db_main.db` | o banco. Criado na primeira execução |
-| `data/cache/` | embeddings do motor de busca, gerados uma vez |
+| `limpar_associacao.py` | apaga vínculos que apontam para vias que não existem mais |
+| `data/db/db_main.db` | o banco, 2,8 GB depois da carga nacional |
+| `cache/` | respostas da Overpass API, guardadas pelo osmnx |
+| `data/cache/` | embeddings do motor de busca. Vazio hoje |
 | `data/temp/` | o ZIP do RENAEST e sua extração |
-| `data/mapas/` | o HTML gerado pelo notebook 05 |
+| `data/mapas/` | o HTML do notebook 05 |
+| `relatorios/` | relatório do PIP em `.md`, `.docx` e `.pdf`, e o `gerar_docx.py` |
 
-## Um banco só, sem fallback
+Fora os `.py` e os notebooks, nada disso entra no git: o `.gitignore` exclui `/cache`,
+`/data/db`, `/data/temp` e `/relatorios`.
 
-Tudo que os notebooks leem foi gravado por um deles. Não há leitura automática de
-nenhum outro banco.
+Tudo que os notebooks leem foi gravado por um deles. Não há fallback para outro banco: se uma
+tabela não está lá, o notebook que a produz não foi rodado, e o erro diz isso.
 
-Os arquivos `geometria-renaeste.db` e `sinistros.db` na raiz do repositório são de
-outra época e **não** são usados aqui. O dado neles foi produzido por código que não
-existe mais nesta forma — importar dali encheria o banco com resultados que nenhum
-notebook daqui gerou, e depois não haveria como explicar de onde saíram.
+Os notebooks 03 e 04 dependem de cinco colunas de `acidentes`: `num_acidente`, `ano_acidente`,
+`codigo_ibge`, `end_acidente` e `bairro_acidente`. Se algum nome mudar na fonte, a etapa 6 do
+notebook 01 avisa, e a correção é nas constantes `COLUNA_*` do `config.py`, único lugar onde
+esses nomes aparecem.
 
-Consequência prática: o notebook 02 sempre baixa e processa a malha do OpenStreetMap.
-Demora alguns minutos na primeira vez.
+## Quatro coisas que vão te morder
 
-## Se um nome de coluna do RENAEST mudar
+**1. Nome repetido é o teto da qualidade.** Das 4.845 vias de Aparecida de Goiânia, 1.704
+(35,2%) compartilham nome com outra: são 24 logradouros chamados `Rua 4`, 23 chamados `Rua 3` e
+22 chamados `Rua 1`. E 1.840 (38,0%) não têm bairro nenhum para desempatar, porque o
+OpenStreetMap não tem o polígono. Sem bairro, a instrução manda ficar com a primeira candidata,
+que entre homônimas é arbitrária, e o resultado sai como `ok` com nota alta. A etapa 9 do
+notebook 04 mede quanto do seu resultado caiu nisso; em 2024 foram 46,2%. **Olhe esse número
+antes de usar os dados.** Aumentar o `TOP_N` não resolve, só multiplica opções igualmente
+plausíveis. A saída real é associar por coordenada, usando o `buffer` de 150 m que o notebook
+02 já grava e ninguém lê, e isso depende de o RENAEST trazer latitude e longitude.
 
-Os notebooks 03 e 04 dependem de cinco colunas da tabela `acidentes`:
-`num_acidente`, `ano_acidente`, `codigo_ibge`, `end_acidente`, `bairro_acidente`.
+**2. Reprocessar as vias invalida os vínculos.** O `via_id` deriva do nome, dos bairros e do
+centroide, com precisão de 11 m. Qualquer edição no OpenStreetMap que estenda ou corte a via
+move o centroide mais que isso, e o identificador muda. Não há chave estrangeira e nada avisa.
+Reexecutar o notebook 04 sozinho não resolve: `associacao_vias` é indexado por endereço mais
+bairro, então o `par_conhecido()` pula a busca e espalha o `via_id` morto outra vez. Rode
+`python limpar_associacao.py` para o diagnóstico e depois com `--confirmar`. Ele apaga só as
+decisões órfãs e devolve o recorte para `parcial`; a padronização é preservada, o notebook 03
+não roda de novo. Numa medição real, 116 de 2.475 decisões ficaram órfãs, mas carregavam 1.330
+sinistros, 22% do total, porque as vias que quebram são as grandes. A etapa 2 do notebook 05
+mede isso.
 
-Esses nomes vieram da versão anterior do projeto e **nunca foram conferidos contra o
-CSV real** — até agora nenhum script daqui tinha carregado o arquivo de acidentes em
-banco. A etapa 6 do notebook 01 confere e mostra o que faltou.
-
-Se algum nome estiver diferente, corrija as constantes `COLUNA_*` no `config.py`. É o
-único lugar onde eles aparecem.
-
-## Limitações conhecidas
-
-Estas não são falhas de código. São limites do método, e valem para qualquer
-resultado que sair daqui.
-
-### 1. Nome repetido é o teto da qualidade
-
-Cerca de **35% das vias compartilham nome com outra via da mesma cidade** — existem
-23 ruas chamadas `Rua 1` em Aparecida de Goiânia. Dessas vias que colidem, **38% não
-têm bairro nenhum** para servir de desempate, porque o OpenStreetMap não tem o
-polígono daquele bairro.
-
-Quando não há bairro para desempatar, a instrução manda ficar com a primeira
-candidata — que entre várias homônimas é praticamente arbitrária. O resultado sai
-marcado como `ok`, com nota alta, e nada na tabela distingue esse caso de um acerto
-real.
-
-A etapa 9 do notebook 04 mede exatamente quanto do seu resultado caiu nessa
-situação. **Olhe esse número antes de usar os dados.**
-
-Aumentar o `TOP_N` não resolve: mostrar 10 homônimas em vez de 6 só aumenta o número
-de opções igualmente plausíveis. A saída real seria associar por coordenada, usando o
-`buffer` de 150 m que o notebook 02 já grava e ninguém ainda lê — mas isso depende de
-o RENAEST trazer latitude e longitude do acidente.
-
-### 2. Reprocessar as vias invalida os vínculos
-
-O `via_id` é derivado do nome, dos bairros e do centroide da via, com precisão de
-cerca de 11 metros. Qualquer edição no OpenStreetMap que estenda ou corte a via move o
-centroide muito mais que isso, e o identificador muda.
-
-Aí `via_id_associada` e o dicionário `associacao_vias` passam a apontar para vias que
-não existem mais. Não há chave estrangeira e nada avisa.
-
-**Reexecutar o notebook 04 sozinho não resolve.** O dicionário `associacao_vias` é
-indexado por endereço + bairro, então o `par_conhecido()` vê o par, pula a busca e a IA,
-e espalha o `via_id` morto outra vez — marcado como `ok`, com nota.
-
-Rode `python limpar_associacao.py` (mostra o diagnóstico) e depois com `--confirmar`.
-Ele apaga **só** as decisões órfãs e devolve o recorte para `parcial`, para o 04 refazer
-apenas o que ficou sem decisão. A padronização de endereço é preservada — o notebook 03
-não precisa rodar de novo.
-
-Na prática o estrago é parcial e concentrado: reprocessar a mesma cidade pouco depois
-devolve quase a mesma geometria, então a maioria dos `via_id` sobrevive. Numa medição
-real, 116 de 2.475 decisões ficaram órfãs — mas elas carregavam 1.330 acidentes, 22% do
-total, porque as vias que quebram são as grandes.
-
-A etapa 2 do notebook 05 mede isso e avisa. A coluna `baixado_em` na tabela
-`vias_processadas` registra de qual versão do mapa aquele resultado veio.
-
-### 3. A tabela de vias é de uma cidade só
-
-`vias_processadas` guarda uma cidade por vez, e não guarda o código do IBGE — só o nome
-da cidade, em texto.
-
-O `parametros.py` fecha a porta principal: o município é escolhido uma vez, pelo código
-do IBGE, e o nome usado na consulta ao OpenStreetMap é derivado dele, então o notebook 02
-e os notebooks 03/04/05 não podem mais falar de cidades diferentes.
-
-O que continua aberto: se você reprocessar a malha para outra cidade **sem** limpar a
-associação, as decisões antigas seguem no dicionário, indexadas por endereço + bairro
-sem município, e serão reaproveitadas para a cidade nova. Trocou de município, rode o
-`limpar_associacao.py --tudo --confirmar`.
-
-E o notebook 05 não consegue conferir automaticamente que a malha é da cidade certa,
-porque o código do IBGE não está na tabela de vias. Ele imprime a cidade e pede
+**3. A tabela de vias é de uma cidade só.** `vias_processadas` guarda o nome da cidade em texto,
+sem código do IBGE. Se você reprocessar a malha para outra cidade sem limpar a associação, as
+decisões antigas continuam no dicionário, indexadas sem município, e vão ser reaproveitadas para
+a cidade nova. Trocou de município, rode `limpar_associacao.py --tudo --confirmar`. E o notebook
+05 não consegue conferir sozinho que a malha é da cidade certa; ele imprime o nome e pede
 conferência a olho.
 
-### 4. Reprocessar o RENAEST não corrige o que já foi revisado
+**4. Reprocessar o RENAEST não corrige o que já foi revisado.** `acidentes` é substituída a cada
+execução do notebook 01, mas `acidentes_revisado` copia com `INSERT OR IGNORE` por
+`num_acidente`. Linha corrigida na fonte não atualiza a versão revisada.
 
-A tabela `acidentes` é substituída a cada execução do notebook 01, mas `acidentes_revisado`
-copia com `INSERT OR IGNORE` por `num_acidente`. Uma linha corrigida na fonte não
-atualiza a versão já revisada.
+## O cache congela a malha
 
-## O que mudou em relação à versão em API
+A pasta `cache/` guarda 29 MB de respostas da Overpass API de 13/08/2026. Enquanto ela existir,
+reexecutar o notebook 02 é rápido e devolve aquela malha, mesmo que o OpenStreetMap já tenha
+mudado. Bom para reprodutibilidade, ruim quando você quer a malha atual: aí apague a pasta. A
+coluna `baixado_em` de `vias_processadas` registra de qual versão do mapa cada via veio.
 
-O código veio de `api/pipelines/`, que continua funcionando e não foi tocada. Além dos
-comentários e da narrativa, cinco correções entraram na migração:
+## Relatório
 
-- **A revisão travava em `parcial` para sempre.** Endereços como `NAO INFORMADO` fazem o
-  Gemini responder `null`, que é a resposta certa — mas o código tratava isso como falha
-  de chamada e descartava. Os pares nunca entravam no dicionário, a cobertura nunca
-  fechava, e **toda execução reenviava os mesmos endereços impossíveis, gastando cota**.
-  Agora `null` deliberado e chamada que falhou são coisas diferentes.
-- **O aviso de `via_id` duplicado era um erro fatal disfarçado.** Imprimia e seguia, e o
-  índice único estourava logo depois, com a tabela já substituída. Agora falha antes de
-  gravar.
-- **A descoberta do arquivo do RENAEST** assumia que a ordem da lista do portal era
-  cronológica. Agora ordena pela data.
-- **A instrução do Gemini na associação** dizia "até 10 candidatas" enquanto o código
-  enviava 6. Agora o número vem da variável `TOP_N` e não pode divergir.
-- **O contador `distintos` da cobertura** era sobrescrito por um número menor ao retomar
-  um recorte. Agora soma.
+Fica em `relatorios/`. O markdown é a fonte; o `.docx` e o `.pdf` saem dele:
+
+```powershell
+python relatorios/gerar_docx.py relatorios/Relatorio_Final_PIP_Fabio_Assis.md relatorios/Relatorio_Final_PIP_Fabio_Assis.docx
+```
+
+O gerador monta capa, sumário, seções numeradas e tabelas no formato que o PIP exige: A4,
+margens 3/2/3/2 cm, Arial 12, entrelinha 1,5, justificado. Fonte, corpo, capa e sumário são
+parâmetros no topo do arquivo.
+
+O comando sobrescreve o `.docx`. Se você editou no Word, passe as mudanças para o markdown
+antes, senão elas se perdem.
