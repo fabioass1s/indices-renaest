@@ -1,0 +1,5 @@
+*.pyc
+/cache
+/data/temp
+/relatorios
+/data/db
